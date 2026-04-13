@@ -4,10 +4,8 @@
 
 import { FormSubmission, SubmissionResponse } from '@/types';
 
-const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
-
 export const submitForm = async (data: FormSubmission): Promise<SubmissionResponse> => {
-  const response = await fetch(`${API_URL}/api/form/submit`, {
+  const response = await fetch('/api/form/submit', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({
@@ -32,7 +30,7 @@ export const submitForm = async (data: FormSubmission): Promise<SubmissionRespon
 
 export const logAccess = async (action: string, metadata?: any) => {
   try {
-    await fetch(`${API_URL}/api/form/log`, {
+    await fetch('/api/form/log', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ action, metadata }),

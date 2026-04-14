@@ -4,7 +4,7 @@ import { loginAdmin } from '@/lib/db-service';
 export async function POST(request: NextRequest) {
   try {
     const { email, password } = await request.json();
-    const result = loginAdmin(email, password);
+    const result = await loginAdmin(email, password);
 
     if (!result.success) {
       return NextResponse.json({ error: 'Email ou senha incorretos' }, { status: 401 });

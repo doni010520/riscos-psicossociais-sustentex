@@ -7,8 +7,8 @@ export async function POST(request: NextRequest) {
     const ip = request.headers.get('x-forwarded-for') || '0.0.0.0';
     const userAgent = request.headers.get('user-agent') || 'Unknown';
 
-    const result = insertResponse(ip, body.answers, body.completion_time_seconds, userAgent);
-    logAccess(ip, 'form_submit', { response_id: result.id });
+    const result = await insertResponse(ip, body.answers, body.completion_time_seconds, userAgent);
+    await logAccess(ip, 'form_submit', { response_id: result.id });
 
     return NextResponse.json({
       success: true,

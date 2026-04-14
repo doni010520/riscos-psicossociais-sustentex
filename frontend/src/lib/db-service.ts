@@ -1,5 +1,5 @@
 import { getDb } from './database';
-import bcrypt from 'bcryptjs';
+import bcryptjs from 'bcryptjs';
 
 const DIMENSIONS = ['demandas', 'controle', 'relacionamento', 'cargo', 'mudanca', 'apoio_chefia', 'apoio_colegas'];
 const MAX_POINTS: Record<string, number> = {
@@ -14,19 +14,35 @@ function classifyRisk(percentage: number): string {
   return 'critico';
 }
 
+function queryAll(db: any, sql: string, params: any[] = []): any[] {
+  const stmt = db.prepare(sql);
+  if (params.length > 0) stmt.bind(params);
+  const rows: any[] = [];
+  while (stmt.step()) {
+    rows.push(stmt.getAsObject());
+  }
+  stmt.free();
+  return rows;
+}
+
+function queryOne(db: any, sql: string, params: any[] = []): any | null {
+  const rows = queryAll(db, sql, params);
+  return rows.length > 0 ? rows[0] : null;
+}
+
 // ============================================================================
 // AUTH
 // ============================================================================
 
-export function loginAdmin(email: string, password: string) {
-  const db = getDb();
-  const row = db.prepare('SELECT * FROM admin_users WHERE email = ? AND is_active = 1').get(email) as any;
+export async function loginAdmin(email: string, password: string) {
+  const db = await getDb();
+  const row = queryOne(db, 'SELECT * FROM admin_users WHERE email = ? AND is_active = 1', [email]);
 
-  if (!row || !bcrypt.compareSync(password, row.password_hash)) {
+  if (!row || !bcryptjs.compareSync(password, row.password_hash)) {
     return { success: false };
   }
 
-  db.prepare('UPDATE admin_users SET last_login = datetime("now") WHERE id = ?').run(row.id);
+  db.run('UPDATE admin_users SET last_login = datetime("now") WHERE id = ?', [row.id]);
 
   return {
     success: true,
@@ -44,39 +60,41 @@ export function loginAdmin(email: string, password: string) {
 // FORM
 // ============================================================================
 
-export function insertResponse(ipAddress: string, answers: any, completionTimeSeconds: number, userAgent?: string) {
-  const db = getDb();
-  const result = db.prepare(
-    'INSERT INTO responses (ip_address, answers, completion_time_seconds, user_agent) VALUES (?, ?, ?, ?)'
-  ).run(ipAddress, JSON.stringify(answers), completionTimeSeconds, userAgent || null);
+export async function insertResponse(ipAddress: string, answers: any, completionTimeSeconds: number, userAgent?: string) {
+  const db = await getDb();
+  db.run(
+    'INSERT INTO responses (ip_address, answers, completion_time_seconds, user_agent, submitted_at) VALUES (?, ?, ?, ?, datetime("now"))',
+    [ipAddress, JSON.stringify(answers), completionTimeSeconds, userAgent || null]
+  );
 
-  return { id: String(result.lastInsertRowid), success: true };
+  const result = queryOne(db, 'SELECT last_insert_rowid() as id');
+  return { id: String(result?.id || 0), success: true };
 }
 
-export function logAccess(ipAddress: string, action: string, metadata?: any) {
-  const db = getDb();
-  db.prepare('INSERT INTO access_log (ip_address, action, metadata) VALUES (?, ?, ?)').run(
-    ipAddress, action, metadata ? JSON.stringify(metadata) : null
-  );
+export async function logAccess(ipAddress: string, action: string, metadata?: any) {
+  const db = await getDb();
+  db.run('INSERT INTO access_log (ip_address, action, metadata, created_at) VALUES (?, ?, ?, datetime("now"))', [
+    ipAddress, action, metadata ? JSON.stringify(metadata) : null,
+  ]);
 }
 
 // ============================================================================
 // STATS
 // ============================================================================
 
-export function getOverviewStats() {
-  const db = getDb();
+export async function getOverviewStats() {
+  const db = await getDb();
   const now = new Date();
   const h24 = new Date(now.getTime() - 24 * 60 * 60 * 1000).toISOString();
   const d7 = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000).toISOString();
   const d30 = new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000).toISOString();
 
-  const total = (db.prepare('SELECT COUNT(*) as c FROM responses').get() as any).c;
-  const avgTime = (db.prepare('SELECT COALESCE(AVG(completion_time_seconds), 0) as a FROM responses').get() as any).a;
-  const uniqueIps = (db.prepare('SELECT COUNT(DISTINCT ip_address) as c FROM responses').get() as any).c;
-  const last24h = (db.prepare('SELECT COUNT(*) as c FROM responses WHERE submitted_at >= ?').get(h24) as any).c;
-  const last7d = (db.prepare('SELECT COUNT(*) as c FROM responses WHERE submitted_at >= ?').get(d7) as any).c;
-  const last30d = (db.prepare('SELECT COUNT(*) as c FROM responses WHERE submitted_at >= ?').get(d30) as any).c;
+  const total = queryOne(db, 'SELECT COUNT(*) as c FROM responses')?.c || 0;
+  const avgTime = queryOne(db, 'SELECT COALESCE(AVG(completion_time_seconds), 0) as a FROM responses')?.a || 0;
+  const uniqueIps = queryOne(db, 'SELECT COUNT(DISTINCT ip_address) as c FROM responses')?.c || 0;
+  const last24h = queryOne(db, 'SELECT COUNT(*) as c FROM responses WHERE submitted_at >= ?', [h24])?.c || 0;
+  const last7d = queryOne(db, 'SELECT COUNT(*) as c FROM responses WHERE submitted_at >= ?', [d7])?.c || 0;
+  const last30d = queryOne(db, 'SELECT COUNT(*) as c FROM responses WHERE submitted_at >= ?', [d30])?.c || 0;
 
   return {
     total_responses: total,
@@ -88,9 +106,9 @@ export function getOverviewStats() {
   };
 }
 
-export function getRiskDistribution() {
-  const db = getDb();
-  const rows = db.prepare('SELECT answers FROM responses').all() as any[];
+export async function getRiskDistribution() {
+  const db = await getDb();
+  const rows = queryAll(db, 'SELECT answers FROM responses');
 
   return DIMENSIONS.map((dim) => {
     const counts = { baixo: 0, moderado: 0, alto: 0, critico: 0 };
@@ -111,9 +129,9 @@ export function getRiskDistribution() {
   });
 }
 
-export function getDimensionSummary() {
-  const db = getDb();
-  const rows = db.prepare('SELECT answers FROM responses').all() as any[];
+export async function getDimensionSummary() {
+  const db = await getDb();
+  const rows = queryAll(db, 'SELECT answers FROM responses');
 
   return DIMENSIONS.map((dim) => {
     const maxPts = MAX_POINTS[dim] || 50;
@@ -140,9 +158,9 @@ export function getDimensionSummary() {
   });
 }
 
-export function getResponses(limit = 100) {
-  const db = getDb();
-  const rows = db.prepare('SELECT * FROM responses ORDER BY submitted_at DESC LIMIT ?').all(limit) as any[];
+export async function getResponses(limit = 100) {
+  const db = await getDb();
+  const rows = queryAll(db, 'SELECT * FROM responses ORDER BY submitted_at DESC LIMIT ?', [limit]);
 
   return rows.map((row) => ({
     id: String(row.id),
